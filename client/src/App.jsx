@@ -87,6 +87,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [engineError, setEngineError] = useState(null);
 
+  // Coach explanation state
+  const [coachExplanation, setCoachExplanation] = useState(null);
+  const [isExplaining, setIsExplaining] = useState(false);
+
   // ---- Move timing / pause / start-gating ----
   // The game sits idle until the player presses Start. Nothing moves and no
   // clock runs until then. `hasStarted` flips permanently once Start is
@@ -236,6 +240,7 @@ export default function App() {
         traceId: data.trace_id,
         signozTraceUrl: data.signoz_trace_url,
         bestMove: data.best_move,
+        legalMoves: data.legal_moves || [],
       });
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -248,6 +253,32 @@ export default function App() {
     } finally {
       clearTimeout(timeoutId);
       setIsEvaluating(false);
+    }
+  };
+
+  const requestCoachExplanation = async () => {
+    if (!telemetry.bestMove || !telemetry.traceId) return;
+    setIsExplaining(true);
+    setCoachExplanation(null);
+    try {
+      const response = await fetch('/api/coach/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fen: game.fen(),
+          bestMove: telemetry.bestMove,
+          evalScore: telemetry.eval,
+          legalMoves: telemetry.legalMoves || [],
+          traceId: telemetry.traceId,
+        }),
+      });
+      if (!response.ok) throw new Error(`Coach returned ${response.status}`);
+      const data = await response.json();
+      setCoachExplanation(data);
+    } catch (err) {
+      setCoachExplanation({ explanation: `Error: ${err.message}`, tokensUsed: 0, costUsd: 0, latencyMs: 0 });
+    } finally {
+      setIsExplaining(false);
     }
   };
 
@@ -457,6 +488,39 @@ export default function App() {
 
             <div className={`chessboard ${!hasStarted ? 'chessboard-idle' : ''}`}>{boardGrid}</div>
           </div>
+
+          <div className="glass-panel coach-panel" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10 }}>
+            <button
+              onClick={requestCoachExplanation}
+              disabled={isExplaining || !telemetry.bestMove}
+              style={{
+                width: '100%', padding: '8px 12px',
+                background: isExplaining ? '#334155' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                color: '#fff', border: 'none', borderRadius: 8,
+                cursor: isExplaining || !telemetry.bestMove ? 'not-allowed' : 'pointer',
+                opacity: !telemetry.bestMove ? 0.5 : 1,
+                fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+            >
+              {isExplaining ? 'Thinking...' : 'Explain Move (LLM)'}
+            </button>
+
+            {coachExplanation && (
+              <div style={{
+                marginTop: 8, padding: '10px 12px', borderRadius: 8,
+                background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
+                fontSize: 12, lineHeight: 1.5, color: '#c7d2fe',
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4, color: '#a5b4fc', fontSize: 11 }}>Coach Explanation</div>
+                <div>{coachExplanation.explanation}</div>
+                {coachExplanation.tokensUsed > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
+                    {coachExplanation.tokensUsed} tokens &middot; ${coachExplanation.costUsd?.toFixed(4)} &middot; {coachExplanation.latencyMs}ms
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Players, secondary controls & move history sit beside the board */}
@@ -602,12 +666,19 @@ export default function App() {
                       <span>{'\u251C\u2500 POST /api/engine/evaluate'}</span><span>{telemetry.timeMs.toFixed(0)}ms</span>
                     </div>
                     <div className="span-row span-row-2">
-                      <span>{'\u251C\u2500 EvaluatePosition'}</span><span>{(telemetry.timeMs * 0.95).toFixed(0)}ms</span>
+                      <span>{'\u251C\u2500 agent.decide_move'}</span><span>{(telemetry.timeMs * 0.95).toFixed(0)}ms</span>
                     </div>
                     <div className="span-row span-row-3">
-                      <span>{'\u2514\u2500 C++ Minimax'}</span><span>{telemetry.timeMs.toFixed(0)}ms</span>
+                      <span>{'\u251C\u2500 engine.search'}</span><span>{telemetry.timeMs.toFixed(0)}ms</span>
+                    </div>
+                    <div className="span-row span-row-3">
+                      <span>{'\u251C\u2500 engine.evaluation'}</span><span>{'&lt;1ms'}</span>
+                    </div>
+                    <div className="span-row span-row-3">
+                      <span>{'\u2514\u2500 engine.transposition_lookup'}</span><span>{'&lt;1ms'}</span>
                     </div>
                   </div>
+
                 </div>
               ) : (
                 <div className="telemetry-empty">

@@ -1,0 +1,112 @@
+{
+  "layout": [
+    {"h": 3, "w": 6, "x": 0, "y": 0, "i": "header-title", "minW": 3, "minH": 1},
+    {"h": 6, "w": 6, "x": 0, "y": 3, "i": "search-nodes", "minW": 3, "minH": 3},
+    {"h": 6, "w": 6, "x": 6, "y": 3, "i": "search-duration", "minW": 3, "minH": 3},
+    {"h": 6, "w": 6, "x": 0, "y": 9, "i": "pruning-efficiency", "minW": 3, "minH": 3},
+    {"h": 6, "w": 6, "x": 6, "y": 9, "i": "tt-hit-rate", "minW": 3, "minH": 3},
+    {"h": 6, "w": 6, "x": 0, "y": 15, "i": "llm-cost-latency", "minW": 3, "minH": 3},
+    {"h": 6, "w": 6, "x": 6, "y": 15, "i": "eval-distribution", "minW": 3, "minH": 3},
+    {"h": 5, "w": 12, "x": 0, "y": 21, "i": "trace-waterfall", "minW": 6, "minH": 3}
+  ],
+  "widgets": {
+    "search-nodes": {
+      "title": "Nodes Explored per Move",
+      "description": "Total chess positions evaluated by the engine for each move. Opening/middlegame/endgame phases should appear visually distinct based on node counts.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'chess.total_nodes' AS nodes, attributes->>'chess.best_move' AS best_move, attributes->>'chess.fen' AS position, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-engine-service' AND name = 'agent.decide_move' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "{{best_move}}",
+          "disabled": false
+        }
+      ],
+      "columnConfig": {
+        "format": "integer"
+      },
+      "panelType": "graph"
+    },
+    "search-duration": {
+      "title": "Engine Search Duration (ms)",
+      "description": "Time taken by the C++ engine to search and return the best move. Spikes indicate complex positions.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'chess.total_duration_ms' AS duration_ms, attributes->>'chess.best_move' AS move, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-engine-service' AND name = 'agent.decide_move' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "{{move}}",
+          "disabled": false
+        }
+      ],
+      "panelType": "graph"
+    },
+    "pruning-efficiency": {
+      "title": "Pruning Efficiency (Alpha-Beta Cutoffs)",
+      "description": "Number of alpha-beta pruning events per search. Higher values indicate better move ordering and more effective search.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'engine.pruning_events' AS prunes, attributes->>'engine.best_move' AS move, attributes->>'engine.depth_reached' AS depth, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-engine-service' AND name = 'engine.search' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "depth={{depth}} {{move}}",
+          "disabled": false
+        }
+      ],
+      "panelType": "graph"
+    },
+    "tt-hit-rate": {
+      "title": "Transposition Table Hit Rate",
+      "description": "Percentage of TT lookups that returned a cached evaluation. Higher is better — means the TT is avoiding re-searching transposed positions.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'engine.tt_hit_rate' AS hit_rate, attributes->>'engine.tt_entries' AS entries, attributes->>'engine.best_move' AS move, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-engine-service' AND name = 'engine.search' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "{{move}} (entries={{entries}})",
+          "disabled": false
+        }
+      ],
+      "panelType": "graph"
+    },
+    "llm-cost-latency": {
+      "title": "LLM Coach Agent: Cost & Latency",
+      "description": "Per-explanation cost (USD) and response latency from the Anthropic Claude API. Tracks token consumption over time.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'llm.cost_usd' AS cost_usd, attributes->>'llm.latency_ms' AS latency_ms, attributes->>'llm.total_tokens' AS tokens, attributes->>'chess.best_move' AS move, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-coach-agent' AND name = 'llm.generate_explanation' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "{{move}} (${{cost_usd}})",
+          "disabled": false
+        }
+      ],
+      "panelType": "graph"
+    },
+    "eval-distribution": {
+      "title": "Evaluation Score Distribution",
+      "description": "Distribution of engine evaluation scores across moves. Shows whether the engine is finding advantageous or equal positions.",
+      "queries": [
+        {
+          "query": "SELECT attributes->>'engine.eval_score' AS eval_score, attributes->>'engine.best_move' AS move, timestamp FROM signoz_traces.signoz_index_v3 WHERE service_name = 'chess-engine-service' AND name = 'engine.search' ORDER BY timestamp DESC LIMIT 100",
+          "legend": "{{move}}",
+          "disabled": false
+        }
+      ],
+      "panelType": "graph"
+    },
+    "trace-waterfall": {
+      "title": "Agent Decision Trace Waterfall",
+      "description": "Full span hierarchy for each agent.decide_move call: search → evaluation → transposition lookup → coach explanation. Shows the complete reasoning pipeline.",
+      "queries": [
+        {
+          "query": "SELECT name, duration, attributes->>'chess.best_move' AS move FROM signoz_traces.signoz_index_v3 WHERE service_name IN ('chess-engine-service', 'chess-coach-agent') ORDER BY timestamp DESC LIMIT 50",
+          "legend": "{{name}}",
+          "disabled": false
+        }
+      ],
+      "panelType": "table"
+    }
+  },
+  "variables": {
+    "service": {
+      "name": "service_name",
+      "type": "dropdown",
+      "options": ["chess-engine-service", "chess-coach-agent"],
+      "defaultValue": "chess-engine-service"
+    }
+  },
+  "tags": ["chess", "ai-agent", "observability", "signoz", "hackathon"],
+  "name": "Glass Box Chess - Agent Observability Dashboard",
+  "description": "Full observability dashboard for the Glass Box Chess AI agent. Tracks search performance, pruning efficiency, TT utilization, LLM costs, and the complete decision-making trace."
+}

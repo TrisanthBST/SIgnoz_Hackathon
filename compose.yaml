@@ -1,4 +1,161 @@
+x-clickhouse-defaults: &clickhouse-defaults
+  restart: on-failure
+  image: clickhouse/clickhouse-server:24.1.2-alpine
+  tty: true
+  depends_on:
+    - zookeeper-1
+  logging:
+    options:
+      max-size: 50m
+      max-file: "3"
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  ulimits:
+    nproc: 65535
+    nofile:
+      soft: 262144
+      hard: 262144
+
+x-db-depend: &db-depend
+  depends_on:
+    clickhouse:
+      condition: service_healthy
+    otel-collector-migrator-sync:
+      condition: service_completed_successfully
+
 services:
+
+  zookeeper-1:
+    image: zookeeper:3.9
+    hostname: zookeeper-1
+    ports:
+      - "2181:2181"
+      - "2888:2888"
+      - "3888:3888"
+    volumes:
+      - ./signoz-data/zookeeper-1:/data
+      - ./signoz-data/zookeeper-1/datalog:/datalog
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_AUTOPURGE_INTERVAL: 1
+
+  clickhouse:
+    <<: *clickhouse-defaults
+    hostname: clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse/
+      - ./signoz-config/clickhouse-config.xml:/etc/clickhouse-server/config.xml
+      - ./signoz-config/clickhouse-users.xml:/etc/clickhouse-server/users.xml
+      - ./signoz-config/custom-function.xml:/etc/clickhouse-server/custom-function.xml
+      - ./signoz-config/clickhouse-cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./signoz-config/user_scripts:/var/lib/clickhouse/user_scripts/
+
+  alertmanager:
+    image: signoz/alertmanager:0.23.7
+    volumes:
+      - ./signoz-data/alertmanager:/data
+    depends_on:
+      query-service:
+        condition: service_healthy
+    restart: on-failure
+    command:
+      - --queryService.url=http://query-service:8085
+      - --storage.path=/data
+
+  query-service:
+    image: signoz/query-service:0.64.0
+    command:
+      - "-config=/root/config/prometheus.yml"
+      - "--use-logs-new-schema=true"
+      - "--use-trace-new-schema=true"
+    volumes:
+      - ./signoz-config/prometheus.yml:/root/config/prometheus.yml
+      - ./signoz-config/dashboards:/root/config/dashboards
+      - ./signoz-data/signoz/:/var/lib/signoz/
+    environment:
+      - ClickHouseUrl=tcp://clickhouse:9000
+      - ALERTMANAGER_API_PREFIX=http://alertmanager:9093/api/
+      - SIGNOZ_LOCAL_DB_PATH=/var/lib/signoz/signoz.db
+      - DASHBOARDS_PATH=/root/config/dashboards
+      - STORAGE=clickhouse
+      - GODEBUG=netdns=go
+      - TELEMETRY_ENABLED=true
+      - DEPLOYMENT_TYPE=docker-standalone-amd
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: *db-depend
+
+  frontend:
+    image: signoz/frontend:0.64.0
+    restart: on-failure
+    depends_on:
+      - alertmanager
+      - query-service
+    ports:
+      - "3301:3301"
+    volumes:
+      - ./signoz-config/nginx-config.conf:/etc/nginx/conf.d/default.conf
+
+  otel-collector-migrator-sync:
+    image: signoz/signoz-schema-migrator:0.111.16
+    command:
+      - "sync"
+      - "--dsn=tcp://clickhouse:9000"
+      - "--up="
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  otel-collector-migrator-async:
+    image: signoz/signoz-schema-migrator:0.111.16
+    command:
+      - "async"
+      - "--dsn=tcp://clickhouse:9000"
+      - "--up="
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      otel-collector-migrator-sync:
+        condition: service_completed_successfully
+
+  otel-collector:
+    image: signoz/signoz-otel-collector:0.111.16
+    command:
+      - "--config=/etc/otel-collector-config.yaml"
+      - "--manager-config=/etc/manager-config.yaml"
+      - "--copy-path=/var/tmp/collector-config.yaml"
+      - "--feature-gates=-pkg.translator.prometheus.NormalizeName"
+    user: root
+    volumes:
+      - ./signoz-config/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./signoz-config/otel-collector-opamp-config.yaml:/etc/manager-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /:/hostfs:ro
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux
+      - LOW_CARDINAL_EXCEPTION_GROUPING=false
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    restart: on-failure
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      otel-collector-migrator-sync:
+        condition: service_completed_successfully
+      query-service:
+        condition: service_healthy
+
   chess-backend:
     build:
       context: .
@@ -10,8 +167,10 @@ services:
       - OTEL_SERVICE_NAME=chess-engine-service
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
       - SIGNOZ_UI_URL=http://localhost:3301
+      - COACH_SERVICE_URL=http://coach-agent:5001
     depends_on:
-      - otel-collector
+      otel-collector:
+        condition: service_started
 
   chess-frontend:
     build:
@@ -19,14 +178,25 @@ services:
       dockerfile: client/Dockerfile
     ports:
       - "3000:3000"
+    environment:
+      - BACKEND_URL=http://chess-backend:5000
     depends_on:
       - chess-backend
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.95.0
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+  coach-agent:
+    build:
+      context: .
+      dockerfile: coach/Dockerfile
     ports:
-      - "4317:4317" # OTLP gRPC receiver
-      - "4318:4318" # OTLP HTTP receiver
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - OTEL_SERVICE_NAME=chess-coach-agent
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+volumes:
+  clickhouse-data:

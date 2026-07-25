@@ -1,0 +1,38 @@
+{
+  "alerts": [
+    {
+      "name": "Chess Engine Search Timeout Alert",
+      "description": "Fires when agent.decide_move exceeds a time threshold, indicating a pathological position causing search blowup.",
+      "severity": "warning",
+      "query": {
+        "queryType": "promql",
+        "query": "signoz_traces_duration_milliseconds{service_name=\"chess-engine-service\", span_name=\"agent.decide_move\"} > 10000",
+        "summary": "Engine search exceeded 10s threshold",
+        "description": "The chess engine search took over 10 seconds for position {{chess.fen}}. This may indicate a complex tactical position or a search optimization issue.",
+        "runbook": "Check the position FEN in the trace. If the position has many legal moves (e.g., many pieces on the board with open lines), the engine may need deeper search. Consider adjusting the depth limit or time budget."
+      },
+      "rules": [
+        {
+          "condition": "> 10000",
+          "threshold": 10000,
+          "duration": "0m",
+          "severity": "warning"
+        },
+        {
+          "condition": "> 30000",
+          "threshold": 30000,
+          "duration": "0m",
+          "severity": "critical"
+        }
+      ],
+      "labels": {
+        "team": "chess-engine",
+        "service": "chess-engine-service"
+      },
+      "annotations": {
+        "summary": "Chess engine search exceeding time threshold",
+        "runbook_url": "https://github.com/your-org/glass-box-chess/blob/main/RUNBOOK.md"
+      }
+    }
+  ]
+}

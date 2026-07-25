@@ -8,28 +8,24 @@ receivers:
 
 processors:
   batch:
-    send_batch_size: 1000
+    send_batch_size: 100
     timeout: 1s
 
 exporters:
-  otlp/signoz:
-    endpoint: ${SIGNOZ_OTLP_ENDPOINT:-signoz-otel-collector:4317}
+  otlp/jaeger:
+    endpoint: jaeger:4317
     tls:
       insecure: true
   logging:
-    loglevel: debug
+    verbosity: normal
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/signoz, logging]
+      exporters: [otlp/jaeger, logging]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/signoz, logging]
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/signoz, logging]
+      exporters: [logging]
