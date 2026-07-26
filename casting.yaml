@@ -1,0 +1,72 @@
+apiVersion: v1alpha1
+metadata:
+  name: signoz
+spec:
+  deployment:
+    flavor: compose
+    mode: docker
+  telemetrystore:
+    spec:
+      cluster:
+        replicas: 0
+        shards: 1
+  patches:
+    - target: "deployment/compose.yaml"
+      operations:
+        - op: add
+          path: /services/chess-backend
+          value:
+            build:
+              context: ..
+              dockerfile: server/Dockerfile
+            container_name: chess-backend
+            ports:
+              - "5000:5000"
+            environment:
+              - PORT=5000
+              - OTEL_SERVICE_NAME=chess-engine-service
+              - OTEL_EXPORTER_OTLP_ENDPOINT=http://ingester:4318
+              - SIGNOZ_UI_URL=http://signoz-signoz-0:8080
+              - COACH_SERVICE_URL=http://coach-agent:5001
+            depends_on:
+              ingester:
+                condition: service_started
+            networks:
+              - signoz-network
+            restart: unless-stopped
+        - op: add
+          path: /services/chess-frontend
+          value:
+            build:
+              context: ..
+              dockerfile: client/Dockerfile
+            container_name: chess-frontend
+            ports:
+              - "3000:3000"
+            environment:
+              - BACKEND_URL=http://chess-backend:5000
+            depends_on:
+              - chess-backend
+            networks:
+              - signoz-network
+            restart: unless-stopped
+        - op: add
+          path: /services/coach-agent
+          value:
+            build:
+              context: ..
+              dockerfile: coach/Dockerfile
+            container_name: coach-agent
+            ports:
+              - "5001:5001"
+            environment:
+              - PORT=5001
+              - OTEL_SERVICE_NAME=chess-coach-agent
+              - OTEL_EXPORTER_OTLP_ENDPOINT=http://ingester:4318
+              - GROQ_API_KEY=${GROQ_API_KEY}
+            depends_on:
+              ingester:
+                condition: service_started
+            networks:
+              - signoz-network
+            restart: unless-stopped
