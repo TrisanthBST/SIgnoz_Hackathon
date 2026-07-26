@@ -592,7 +592,7 @@ static uint64_t ttHits, ttCutoffs, totalNodes;
 static int pruningEvents;
 
 static chrono::high_resolution_clock::time_point gSearchStart;
-static double gTimeLimitMs = 10000;
+static double gTimeLimitMs = 6000;
 static bool gSearchAborted = false;
 
 void clearTT() {
@@ -678,14 +678,12 @@ int quiescence(Board& board, int alpha, int beta, long long& nodeCount, int qDep
     nodeCount++;
     totalNodes++;
 
-    if (!gSearchAborted && (totalNodes & 2047) == 0) {
+    if (!gSearchAborted && (totalNodes & 1023) == 0) {
         auto now = chrono::high_resolution_clock::now();
-        if (chrono::duration<double, milli>(now - gSearchStart).count() > gTimeLimitMs * 0.8) {
+        if (chrono::duration<double, milli>(now - gSearchStart).count() > gTimeLimitMs * 0.65) {
             gSearchAborted = true;
         }
     }
-    if (gSearchAborted) return board.evaluate();
-    if (qDepth > gMaxQDepth)
         return board.evaluate();
     int standPat = board.evaluate();
     if (standPat >= beta) return beta;
@@ -713,9 +711,9 @@ SearchResult alphabeta(Board& board, int depth, int alpha, int beta, long long& 
     nodeCount++;
     totalNodes++;
 
-    if (!gSearchAborted && (totalNodes & 2047) == 0) {
+    if (!gSearchAborted && (totalNodes & 1023) == 0) {
         auto now = chrono::high_resolution_clock::now();
-        if (chrono::duration<double, milli>(now - gSearchStart).count() > gTimeLimitMs * 0.8) {
+        if (chrono::duration<double, milli>(now - gSearchStart).count() > gTimeLimitMs * 0.65) {
             gSearchAborted = true;
         }
     }
@@ -862,7 +860,7 @@ int main(int argc, char* argv[]) {
             bestMoveSoFar = result.bestMove;
         if (!gSearchAborted) bestScoreSoFar = result.score;
         actualDepthReached = depth;
-        if (elapsedMs > timeLimitMs * 0.7 || gSearchAborted) break;
+        if (elapsedMs > timeLimitMs * 0.65 || gSearchAborted) break;
     }
 
     auto endTime = chrono::high_resolution_clock::now();

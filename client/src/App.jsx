@@ -97,10 +97,10 @@ const DIFFICULTY_LEVELS = [
     personality: 'A serious engine with deep tactical vision. Finds most traps and forks.',
     description: 'Depth 6, pure search. A strong opponent that rarely blunders.' },
   { id: 'grandmaster', name: 'Grandmaster', tier: 'Expert', depth: 8, icon: Crown,
-    timeMs: 10000, randomChance: 0, evalNoise: 0, quiescenceDepth: 10,
-    fetchTimeout: 20000,
-    personality: 'Maximum search depth with deep quiescence. Plays at a very strong level.',
-    description: 'Depth 8, deep quiescence. Near-maximum strength of this engine.' },
+    timeMs: 6000, randomChance: 0, evalNoise: 0, quiescenceDepth: 8,
+    fetchTimeout: 10000,
+    personality: 'Deep search with aggressive time management. Near-maximum strength.',
+    description: 'Depth 8, fast time budget. Very strong with responsive play.' },
 ];
 
 const DIFFICULTY_COLORS = {
