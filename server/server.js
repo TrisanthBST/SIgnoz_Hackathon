@@ -60,7 +60,7 @@ function runEngine(fen, depth, timeMs, randomChance = 0, evalNoise = 0, quiescen
     args.push(String(randomChance));
     args.push(String(evalNoise));
     args.push(String(quiescenceDepth));
-    execFile(binary, args, { maxBuffer: 1024 * 1024 * 10, timeout: 30000 }, (error, stdout, stderr) => {
+    execFile(binary, args, { maxBuffer: 1024 * 1024 * 10, timeout: 60000 }, (error, stdout, stderr) => {
       if (error) return reject(error);
       try {
         resolve(JSON.parse(stdout));
