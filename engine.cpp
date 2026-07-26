@@ -128,6 +128,30 @@ const int KING_PST_EG[8][8] = {
     {-50,-30,-30,-30,-30,-30,-30,-50}
 };
 
+static uint64_t zPieceKeys[2][6][64];
+static uint64_t zCastleKeys[16];
+static uint64_t zEpKeys[8];
+static uint64_t zSideKey;
+static bool zInitDone = false;
+static vector<uint64_t> gPosHistory;
+
+static void initZobrist() {
+    uint64_t state = 0x123456789ABCDEF0ULL;
+    auto rng = [&]() -> uint64_t {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    };
+    for (int c = 0; c < 2; c++)
+        for (int p = 0; p < 6; p++)
+            for (int s = 0; s < 64; s++)
+                zPieceKeys[c][p][s] = rng();
+    for (int i = 0; i < 16; i++) zCastleKeys[i] = rng();
+    for (int i = 0; i < 8; i++) zEpKeys[i] = rng();
+    zSideKey = rng();
+}
+
 struct TTEntry {
     uint64_t hash;
     int score;
@@ -194,6 +218,9 @@ public:
             enPassantRow = -1;
             enPassantCol = -1;
         }
+        int hmc, fmn;
+        if (ss >> hmc) halfMoveClock = hmc;
+        if (ss >> fmn) fullMoveNumber = fmn;
         computeHash();
     }
 
@@ -411,6 +438,7 @@ public:
     void makeMove(const Move& m, Board& nextBoard) const {
         nextBoard = *this;
         Piece p = nextBoard.squares[m.fromRow][m.fromCol];
+        Piece captured = squares[m.toRow][m.toCol];
         nextBoard.squares[m.fromRow][m.fromCol] = {EMPTY, NONE_COLOR};
         if (m.promotion != EMPTY) p.type = m.promotion;
         nextBoard.squares[m.toRow][m.toCol] = p;
@@ -443,49 +471,63 @@ public:
         if (m.toRow == 7 && m.toCol == 0) nextBoard.whiteQueenSideCastle = false;
         if (m.toRow == 0 && m.toCol == 7) nextBoard.blackKingSideCastle = false;
         if (m.toRow == 0 && m.toCol == 0) nextBoard.blackQueenSideCastle = false;
+        if (p.type == PAWN || captured.type != EMPTY || m.isEnPassant)
+            nextBoard.halfMoveClock = 0;
+        else
+            nextBoard.halfMoveClock++;
         nextBoard.sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
         if (sideToMove == BLACK) nextBoard.fullMoveNumber++;
         nextBoard.computeHash();
     }
 
     void computeHash() {
+        if (!zInitDone) { initZobrist(); zInitDone = true; }
         zobristHash = 0;
-        static bool initialized = false;
-        static uint64_t pieceKeys[2][6][64];
-        static uint64_t castleKeys[16];
-        static uint64_t epKeys[8];
-        static uint64_t sideKey;
-        if (!initialized) {
-            uint64_t state = 0x123456789ABCDEF0ULL;
-            auto rng = [&]() -> uint64_t {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                return state;
-            };
-            for (int c = 0; c < 2; c++)
-                for (int p = 0; p < 6; p++)
-                    for (int s = 0; s < 64; s++)
-                        pieceKeys[c][p][s] = rng();
-            for (int i = 0; i < 16; i++) castleKeys[i] = rng();
-            for (int i = 0; i < 8; i++) epKeys[i] = rng();
-            sideKey = rng();
-            initialized = true;
-        }
         for (int r = 0; r < 8; r++) {
             for (int c = 0; c < 8; c++) {
                 if (squares[r][c].type != EMPTY) {
-                    zobristHash ^= pieceKeys[squares[r][c].color][squares[r][c].type][r * 8 + c];
+                    zobristHash ^= zPieceKeys[squares[r][c].color][squares[r][c].type][r * 8 + c];
                 }
             }
         }
         int castleIdx = (whiteKingSideCastle?1:0) | (whiteQueenSideCastle?2:0) | (blackKingSideCastle?4:0) | (blackQueenSideCastle?8:0);
-        zobristHash ^= castleKeys[castleIdx];
-        if (enPassantCol >= 0) zobristHash ^= epKeys[enPassantCol];
-        if (sideToMove == BLACK) zobristHash ^= sideKey;
+        zobristHash ^= zCastleKeys[castleIdx];
+        if (enPassantCol >= 0) zobristHash ^= zEpKeys[enPassantCol];
+        if (sideToMove == BLACK) zobristHash ^= zSideKey;
     }
 
     int evaluate() const {
+        if (halfMoveClock >= 100) return 0;
+        {
+            int wM = 0, bM = 0, wB = 0, bB = 0;
+            bool wH = false, bH = false, wP = false, bP = false;
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece pc = squares[r][c];
+                    if (pc.type == EMPTY) continue;
+                    if (pc.type == QUEEN || pc.type == ROOK || pc.type == PAWN) {
+                        if (pc.color == WHITE) wH = true; else bH = true;
+                    }
+                    if (pc.type == PAWN) { if (pc.color == WHITE) wP = true; else bP = true; }
+                    if (pc.type == KNIGHT) { if (pc.color == WHITE) wM++; else bM++; }
+                    if (pc.type == BISHOP) { if (pc.color == WHITE) { wM++; wB++; } else { bM++; bB++; } }
+                }
+            }
+            bool drawish = false;
+            if (!wH && !bH) {
+                if (wM <= 1 && bM <= 1) drawish = true;
+                if (wM == 1 && bM == 1 && wB == 1 && bB == 1) drawish = true;
+            }
+            if (!wP && !bP && wM == 1 && bM == 0 && !bH) drawish = true;
+            if (!wP && !bP && bM == 1 && wM == 0 && !wH) drawish = true;
+            if (drawish) return 0;
+        }
+        {
+            int cnt = 0;
+            for (size_t i = 0; i < gPosHistory.size(); i++)
+                if (gPosHistory[i] == zobristHash) cnt++;
+            if (cnt >= 3) return 0;
+        }
         int mgScore = 0, egScore = 0;
         int gamePhase = 0;
         static const int phaseValues[] = {0, 1, 1, 2, 4, 0, 0};
@@ -532,28 +574,6 @@ public:
     }
 };
 
-static uint64_t zobristTable[2][6][64];
-static uint64_t castleZobrist[16];
-static uint64_t epZobrist[8];
-static uint64_t sideZobrist;
-
-void initZobrist() {
-    uint64_t state = 0x123456789ABCDEF0ULL;
-    auto rng = [&]() -> uint64_t {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        return state;
-    };
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            for (int s = 0; s < 64; s++)
-                zobristTable[c][p][s] = rng();
-    for (int i = 0; i < 16; i++) castleZobrist[i] = rng();
-    for (int i = 0; i < 8; i++) epZobrist[i] = rng();
-    sideZobrist = rng();
-}
-
 struct SearchResult {
     int score;
     Move bestMove;
@@ -593,26 +613,28 @@ inline int squareIndex(int r, int c) { return r * 8 + c; }
 Move probeTT(uint64_t hash, int depth, int alpha, int beta, int& score, bool& found) {
     TTEntry& entry = transpositionTable[hash & TT_MASK];
     Move emptyMove = {0, 0, 0, 0};
-    found = false;
-    if (entry.hash == hash) {
-        if (entry.depth >= depth) {
-            if (entry.flag == TT_EXACT) {
-                score = entry.score;
-                found = true;
-                ttCutoffs++;
-            } else if (entry.flag == TT_ALPHA && entry.score <= alpha) {
-                score = entry.score;
-                found = true;
-                ttCutoffs++;
-            } else if (entry.flag == TT_BETA && entry.score >= beta) {
-                score = entry.score;
-                found = true;
-                ttCutoffs++;
-            }
-        }
+    if (entry.hash == hash && entry.depth >= depth) {
         ttHits++;
+        if (entry.flag == TT_EXACT) {
+            score = entry.score;
+            found = true;
+            ttCutoffs++;
+            return entry.bestMove;
+        } else if (entry.flag == TT_ALPHA && entry.score <= alpha) {
+            score = entry.score;
+            found = true;
+            ttCutoffs++;
+            return entry.bestMove;
+        } else if (entry.flag == TT_BETA && entry.score >= beta) {
+            score = entry.score;
+            found = true;
+            ttCutoffs++;
+            return entry.bestMove;
+        }
+        found = false;
         return entry.bestMove;
     }
+    found = false;
     return emptyMove;
 }
 
@@ -735,11 +757,14 @@ SearchResult alphabeta(Board& board, int depth, int alpha, int beta, long long& 
     for (size_t i = 0; i < scoredMoves.size(); i++) {
         Board next;
         board.makeMove(scoredMoves[i].second, next);
+        gPosHistory.push_back(next.zobristHash);
         bool childCheck = next.isKingInCheck(next.sideToMove);
         bool extend = allowCheckExtension && childCheck && depth <= 1;
 
         SearchResult res = alphabeta(next, depth - 1 + (extend ? 1 : 0), -beta, -alpha, nodeCount, ply + 1, allowCheckExtension && !extend);
         int score = -res.score;
+
+        gPosHistory.pop_back();
 
         if (score > bestScore) {
             bestScore = score;
@@ -766,11 +791,14 @@ SearchResult alphabeta(Board& board, int depth, int alpha, int beta, long long& 
     }
 
     int flag;
-    if (bestScore <= origAlpha) flag = TT_ALPHA;
+    if (gSearchAborted) {
+        flag = TT_EXACT;
+    } else if (bestScore <= origAlpha) flag = TT_ALPHA;
     else if (bestScore >= beta) flag = TT_BETA;
     else flag = TT_EXACT;
 
-    storeTT(board.zobristHash, depth, bestScore, flag, bestMove);
+    if (!gSearchAborted)
+        storeTT(board.zobristHash, depth, bestScore, flag, bestMove);
     return {bestScore, bestMove, nodeCount};
 }
 
@@ -801,8 +829,12 @@ int main(int argc, char* argv[]) {
 
     if (maxDepth > 10) maxDepth = 10;
 
+    initZobrist();
+    gPosHistory.clear();
+
     Board board;
     board.loadFEN(fen);
+    gPosHistory.push_back(board.zobristHash);
 
     auto startTime = chrono::high_resolution_clock::now();
     long long nodeCount = 0;

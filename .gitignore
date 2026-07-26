@@ -26,3 +26,7 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Runtime data
+signoz-data/
+clickhouse-data/
