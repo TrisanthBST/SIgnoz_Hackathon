@@ -330,6 +330,7 @@ export default function App() {
   const pauseStartRef = useRef(null);
   const prevEvalRef = useRef(0);
   const boardRef = useRef(null);
+  const historyRef = useRef(null);
   const [showBestMoveArrow, setShowBestMoveArrow] = useState(true);
   const [liveElapsedMs, setLiveElapsedMs] = useState(0);
 
@@ -345,6 +346,12 @@ export default function App() {
     } catch {}
   }, [game, moveHistory, lastMove, hasStarted, fenHistory, telemetry, coachExplanation, coachStats,
       gameStats, config.playAsWhite, config.engineDepth, config.autoPlayDelayMs]);
+
+  useEffect(() => {
+    if (historyRef.current) {
+      historyRef.current.scrollTop = historyRef.current.scrollHeight;
+    }
+  }, [moveHistory]);
 
   useEffect(() => {
     if (game.isGameOver() || isPaused) return undefined;
@@ -738,7 +745,7 @@ export default function App() {
 
       <main className="main-stage">
         {/* Left: Engine Analysis + AI Coach */}
-        <aside className="side-panel">
+        <aside className="side-panel side-panel-scroll">
           <div className="glass-panel side-panel-card">
             <div className="section-header-title">
               <Target className="w-4 h-4" style={{ color: 'var(--accent-amber)' }} />
@@ -942,7 +949,7 @@ export default function App() {
         </div>
 
         {/* Right: Players, Controls, History */}
-        <aside className="side-panel">
+        <aside className="side-panel side-panel-scroll">
           <div className="glass-panel side-panel-card">
             <div className="section-header-title">
               <User className="w-4 h-4" style={{ color: 'var(--accent-emerald)' }} />
@@ -1042,8 +1049,20 @@ export default function App() {
             <div className="section-header-title">
               <History className="w-4 h-4" style={{ color: 'var(--accent-cyan)' }} />
               Move History
+              {moveHistory.length > 0 && (
+                <span className="badge badge-cyan" style={{ marginLeft: 'auto', fontSize: '0.55rem' }}>{moveHistory.length}</span>
+              )}
+              {moveHistory.length > 4 && (
+                <button className="history-scroll-btn" onClick={() => {
+                  if (historyRef.current) {
+                    historyRef.current.scrollTo({ top: historyRef.current.scrollHeight, behavior: 'smooth' });
+                  }
+                }} title="Scroll to latest">
+                  &#8595;
+                </button>
+              )}
             </div>
-            <div className="history-list">
+            <div className="history-list" ref={historyRef}>
               {moveHistory.length === 0 ? (
                 <span className="history-empty">No moves played yet</span>
               ) : (

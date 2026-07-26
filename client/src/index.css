@@ -304,12 +304,14 @@ body {
    ============================================================ */
 .main-stage {
   flex: 1;
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  flex-wrap: nowrap;
+  align-items: stretch;
   justify-content: center;
   gap: 22px;
   padding: 10px 20px 32px;
+  overflow: hidden;
 }
 
 .board-column {
@@ -525,6 +527,33 @@ body {
   gap: 16px;
   width: 280px;
   flex-shrink: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.side-panel-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+  scroll-behavior: smooth;
+}
+
+.side-panel-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.side-panel-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+}
+
+.side-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
 }
 
 .side-panel:first-of-type {
@@ -551,7 +580,13 @@ body {
 
 .side-panel-history {
   flex: 1;
-  min-height: 160px;
+  min-height: 120px;
+  max-height: none;
+  overflow: hidden;
+}
+
+.side-panel-history .history-list {
+  min-height: 60px;
 }
 
 .section-header-title {
@@ -1012,6 +1047,50 @@ body {
   font-size: 0.72rem;
   max-height: 320px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  align-content: flex-start;
+  padding: 4px 2px;
+  scrollbar-gutter: stable;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+
+.history-list-empty {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  width: 100%;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.history-scroll-btn {
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  color: #67e8f9;
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  transition: background 0.15s ease, transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.history-scroll-btn:hover {
+  background: rgba(34, 211, 238, 0.2);
+  transform: scale(1.1);
 }
 
 .history-empty {
@@ -1359,6 +1438,8 @@ body {
     flex-direction: column;
     align-items: stretch;
     padding: 12px 16px 32px;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .board-column,
@@ -1378,6 +1459,8 @@ body {
 
   .side-panel {
     width: 100%;
+    height: auto;
+    max-height: none;
   }
 }
 
