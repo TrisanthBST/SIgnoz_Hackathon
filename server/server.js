@@ -52,12 +52,15 @@ function addTelemetryLog(log) {
   if (recentTelemetryLogs.length > 50) recentTelemetryLogs.pop();
 }
 
-function runEngine(fen, depth, timeMs) {
+function runEngine(fen, depth, timeMs, randomChance = 0, evalNoise = 0, quiescenceDepth = 8) {
   return new Promise((resolve, reject) => {
     const binary = process.platform === 'win32' ? ENGINE_PATH : ENGINE_PATH.replace('.exe', '');
     const args = [fen, String(depth)];
     if (timeMs) args.push(String(timeMs));
-    execFile(binary, args, { maxBuffer: 1024 * 1024 * 10, timeout: 15000 }, (error, stdout, stderr) => {
+    args.push(String(randomChance));
+    args.push(String(evalNoise));
+    args.push(String(quiescenceDepth));
+    execFile(binary, args, { maxBuffer: 1024 * 1024 * 10, timeout: 30000 }, (error, stdout, stderr) => {
       if (error) return reject(error);
       try {
         resolve(JSON.parse(stdout));
@@ -69,7 +72,7 @@ function runEngine(fen, depth, timeMs) {
 }
 
 app.post('/api/engine/evaluate', async (req, res) => {
-  const { fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", depth = dynamicConfig.defaultDepth } = req.body;
+  const { fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", depth = dynamicConfig.defaultDepth, timeMs = 5000, randomChance = 0, evalNoise = 0, quiescenceDepth = 8 } = req.body;
 
   return tracer.startActiveSpan('agent.decide_move', async (rootSpan) => {
     try {
@@ -81,11 +84,16 @@ app.post('/api/engine/evaluate', async (req, res) => {
       rootSpan.setAttribute('chess.engine_type', 'cpp-minimax-alphabeta');
       rootSpan.setAttribute('chess.service.version', '2.0.0');
 
-      const startTime = Date.now();
+      const spans = [];
+      const rootStart = Date.now();
 
       const engineResult = await tracer.startActiveSpan('engine.search', async (searchSpan) => {
         try {
-          const result = await runEngine(fen, depth, 5000);
+          const searchStart = Date.now();
+          const result = await runEngine(fen, depth, timeMs, randomChance, evalNoise, quiescenceDepth);
+          const searchDur = Date.now() - searchStart;
+
+          spans.push({ name: 'engine.search', start: searchStart - rootStart, duration: searchDur, service: 'chess-engine' });
 
           searchSpan.setAttribute('engine.nodes_total', result.nodes);
           searchSpan.setAttribute('engine.time_ms', result.time_ms);
@@ -115,6 +123,7 @@ app.post('/api/engine/evaluate', async (req, res) => {
       });
 
       if (engineResult.trace) {
+        const ttStart = Date.now();
         await tracer.startActiveSpan('engine.transposition_lookup', async (ttSpan) => {
           ttSpan.setAttribute('tt.hits', engineResult.trace.tt_hits);
           ttSpan.setAttribute('tt.cutoffs', engineResult.trace.tt_cutoffs);
@@ -123,7 +132,9 @@ app.post('/api/engine/evaluate', async (req, res) => {
           ttSpan.setAttribute('tt.cache_size', 1048576);
           ttSpan.end();
         });
+        spans.push({ name: 'engine.transposition_lookup', start: ttStart - rootStart, duration: Date.now() - ttStart, service: 'chess-engine' });
 
+        const evalStart = Date.now();
         await tracer.startActiveSpan('engine.evaluation', async (evalSpan) => {
           evalSpan.setAttribute('eval.score', engineResult.eval);
           evalSpan.setAttribute('eval.centipawns', engineResult.eval);
@@ -132,17 +143,20 @@ app.post('/api/engine/evaluate', async (req, res) => {
           evalSpan.setAttribute('eval.phase', Math.abs(engineResult.eval) > 300 ? 'middlegame' : 'opening');
           evalSpan.end();
         });
+        spans.push({ name: 'engine.evaluation', start: evalStart - rootStart, duration: Date.now() - evalStart, service: 'chess-engine' });
 
         pruningCounter.add(engineResult.trace.total_pruning_events, {
           depth: String(engineResult.depth),
         });
       }
 
-      const totalDuration = Date.now() - startTime;
+      const totalDuration = Date.now() - rootStart;
 
       moveCounter.add(1, { depth: String(depth) });
       nodeCounter.add(engineResult.nodes, { depth: String(depth) });
       searchDurationHistogram.record(engineResult.time_ms, { depth: String(depth) });
+
+      spans.unshift({ name: 'agent.decide_move', start: 0, duration: totalDuration, service: 'chess-engine' });
 
       rootSpan.setAttribute('chess.eval_centipawns', engineResult.eval);
       rootSpan.setAttribute('chess.total_duration_ms', totalDuration);
@@ -164,6 +178,7 @@ app.post('/api/engine/evaluate', async (req, res) => {
         trace_id: activeTraceId,
         span_id: activeSpanId,
         signoz_trace_url: `${dynamicConfig.signozUiUrl}/trace/${activeTraceId}`,
+        spans,
       });
     } catch (err) {
       rootSpan.recordException(err);

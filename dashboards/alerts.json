@@ -1,37 +1,163 @@
 {
-  "alerts": [
+  "version": "v3.0.0",
+  "rules": [
     {
-      "name": "Chess Engine Search Timeout Alert",
-      "description": "Fires when agent.decide_move exceeds a time threshold, indicating a pathological position causing search blowup.",
+      "id": "chess-engine-timeout-warning",
+      "name": "Chess Engine Search Timeout (Warning)",
+      "description": "Fires when agent.decide_move exceeds 10s, indicating search blowup.",
       "severity": "warning",
+      "ruleType": "TRACES_BASED",
+      "evalWindow": "5m",
+      "disabled": false,
       "query": {
-        "queryType": "promql",
-        "query": "signoz_traces_duration_milliseconds{service_name=\"chess-engine-service\", span_name=\"agent.decide_move\"} > 10000",
-        "summary": "Engine search exceeded 10s threshold",
-        "description": "The chess engine search took over 10 seconds for position {{chess.fen}}. This may indicate a complex tactical position or a search optimization issue.",
-        "runbook": "Check the position FEN in the trace. If the position has many legal moves (e.g., many pieces on the board with open lines), the engine may need deeper search. Consider adjusting the depth limit or time budget."
-      },
-      "rules": [
-        {
-          "condition": "> 10000",
-          "threshold": 10000,
-          "duration": "0m",
-          "severity": "warning"
-        },
-        {
-          "condition": "> 30000",
-          "threshold": 30000,
-          "duration": "0m",
-          "severity": "critical"
+        "queryType": "builder",
+        "compositeQuery": {
+          "builderQueries": {
+            "A": {
+              "queryType": "trace_query",
+              "query": {
+                "op": "lt",
+                "items": [],
+                "aggregateOperator": "count",
+                "filters": {
+                  "items": [
+                    {
+                      "key": "serviceName",
+                      "op": "=",
+                      "value": "chess-engine-service"
+                    },
+                    {
+                      "key": "name",
+                      "op": "=",
+                      "value": "agent.decide_move"
+                    }
+                  ]
+                },
+                "groupBy": [],
+                "orderBy": [],
+                "limit": 0
+              }
+            }
+          }
         }
-      ],
-      "labels": {
-        "team": "chess-engine",
-        "service": "chess-engine-service"
+      },
+      "condition": {
+        "operator": ">",
+        "target": "10000"
       },
       "annotations": {
-        "summary": "Chess engine search exceeding time threshold",
-        "runbook_url": "https://github.com/your-org/glass-box-chess/blob/main/RUNBOOK.md"
+        "summary": "Chess engine search exceeded 10s threshold",
+        "runbook": "Check position complexity. Consider reducing engine depth."
+      },
+      "labels": {
+        "team": "chess-engine",
+        "severity": "warning"
+      }
+    },
+    {
+      "id": "chess-engine-timeout-critical",
+      "name": "Chess Engine Search Timeout (Critical)",
+      "description": "Fires when agent.decide_move exceeds 30s.",
+      "severity": "critical",
+      "ruleType": "TRACES_BASED",
+      "evalWindow": "5m",
+      "disabled": false,
+      "query": {
+        "queryType": "builder",
+        "compositeQuery": {
+          "builderQueries": {
+            "A": {
+              "queryType": "trace_query",
+              "query": {
+                "op": "lt",
+                "items": [],
+                "aggregateOperator": "count",
+                "filters": {
+                  "items": [
+                    {
+                      "key": "serviceName",
+                      "op": "=",
+                      "value": "chess-engine-service"
+                    },
+                    {
+                      "key": "name",
+                      "op": "=",
+                      "value": "agent.decide_move"
+                    }
+                  ]
+                },
+                "groupBy": [],
+                "orderBy": [],
+                "limit": 0
+              }
+            }
+          }
+        }
+      },
+      "condition": {
+        "operator": ">",
+        "target": "30000"
+      },
+      "annotations": {
+        "summary": "Chess engine search exceeded 30s - likely pathological position",
+        "runbook": "Investigate the FEN position. May need depth reduction or pruning fix."
+      },
+      "labels": {
+        "team": "chess-engine",
+        "severity": "critical"
+      }
+    },
+    {
+      "id": "coach-agent-high-latency",
+      "name": "LLM Coach Agent High Latency",
+      "description": "Fires when coach.explain span exceeds 15s.",
+      "severity": "warning",
+      "ruleType": "TRACES_BASED",
+      "evalWindow": "5m",
+      "disabled": false,
+      "query": {
+        "queryType": "builder",
+        "compositeQuery": {
+          "builderQueries": {
+            "A": {
+              "queryType": "trace_query",
+              "query": {
+                "op": "lt",
+                "items": [],
+                "aggregateOperator": "count",
+                "filters": {
+                  "items": [
+                    {
+                      "key": "serviceName",
+                      "op": "=",
+                      "value": "chess-coach-agent"
+                    },
+                    {
+                      "key": "name",
+                      "op": "=",
+                      "value": "coach.explain"
+                    }
+                  ]
+                },
+                "groupBy": [],
+                "orderBy": [],
+                "limit": 0
+              }
+            }
+          }
+        }
+      },
+      "condition": {
+        "operator": ">",
+        "target": "15000"
+      },
+      "annotations": {
+        "summary": "Coach agent LLM response time exceeded 15s",
+        "runbook": "Check Groq API status. Consider switching to fallback model."
+      },
+      "labels": {
+        "team": "chess-coach",
+        "severity": "warning"
       }
     }
   ]

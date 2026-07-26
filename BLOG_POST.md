@@ -110,7 +110,7 @@ We also configured an alert: if `agent.decide_move` exceeds 10 seconds, a warnin
 ```bash
 git clone <repo-url>
 cd glass-box-chess
-export ANTHROPIC_API_KEY=sk-ant-...
+export GROQ_API_KEY=gsk_...
 docker compose up --build
 ```
 

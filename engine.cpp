@@ -7,8 +7,11 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <random>
 
 using namespace std;
+
+mt19937 rng(42);
 
 enum Color { WHITE, BLACK, NONE_COLOR };
 enum PieceType { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, EMPTY };
@@ -43,6 +46,10 @@ struct Move {
 };
 
 const int PIECE_VALUES[7] = { 100, 320, 330, 500, 900, 20000, 0 };
+
+int gRandomChance = 0;
+int gEvalNoise = 0;
+int gMaxQDepth = 8;
 
 const int PAWN_PST[8][8] = {
     { 0,  0,  0,  0,  0,  0,  0,  0},
@@ -517,6 +524,10 @@ public:
         egScore += egKingBonus;
         gamePhase = min(gamePhase, 24);
         int eval = (mgScore * gamePhase + egScore * (24 - gamePhase)) / 24;
+        if (gEvalNoise > 0) {
+            uniform_int_distribution<int> jitter(-gEvalNoise, gEvalNoise);
+            eval += jitter(rng);
+        }
         return (sideToMove == WHITE) ? eval : -eval;
     }
 };
@@ -640,7 +651,7 @@ int scoreMoveForOrdering(const Board& board, const Move& m, const Move& ttMove, 
 int quiescence(Board& board, int alpha, int beta, long long& nodeCount, int qDepth) {
     nodeCount++;
     totalNodes++;
-    if (qDepth > 8)
+    if (qDepth > gMaxQDepth)
         return board.evaluate();
     int standPat = board.evaluate();
     if (standPat >= beta) return beta;
@@ -764,6 +775,9 @@ int main(int argc, char* argv[]) {
     if (argc >= 2) fen = argv[1];
     if (argc >= 3) maxDepth = atoi(argv[2]);
     if (argc >= 4) timeLimitMs = atoi(argv[3]);
+    if (argc >= 5) gRandomChance = atoi(argv[4]);
+    if (argc >= 6) gEvalNoise = atoi(argv[5]);
+    if (argc >= 7) gMaxQDepth = atoi(argv[6]);
 
     if (maxDepth > 10) maxDepth = 10;
 
@@ -801,6 +815,20 @@ int main(int argc, char* argv[]) {
     vector<Move> legalMoves;
     board.generateLegalMoves(legalMoves);
 
+    bool wasRandomBlunder = false;
+    if (gRandomChance > 0 && legalMoves.size() > 1 && bestMoveSoFar.toUCI().length() >= 4) {
+        uniform_int_distribution<int> coinFlip(1, 100);
+        if (coinFlip(rng) <= gRandomChance) {
+            Move searchBest = bestMoveSoFar;
+            uniform_int_distribution<int> pick(0, (int)legalMoves.size() - 1);
+            bestMoveSoFar = legalMoves[pick(rng)];
+            if (!(bestMoveSoFar == searchBest)) {
+                wasRandomBlunder = true;
+                bestScoreSoFar = 0;
+            }
+        }
+    }
+
     Board nextBoard;
     string nextFEN = fen;
     string bestMoveUCI = "";
@@ -832,7 +860,11 @@ int main(int argc, char* argv[]) {
     cout << "    \"total_pruning_events\": " << pruningEvents << ",\n";
     cout << "    \"iterative_deepening\": true,\n";
     cout << "    \"max_depth_requested\": " << maxDepth << ",\n";
-    cout << "    \"actual_depth_reached\": " << actualDepthReached << "\n";
+    cout << "    \"actual_depth_reached\": " << actualDepthReached << ",\n";
+    cout << "    \"random_blunder\": " << (wasRandomBlunder ? "true" : "false") << ",\n";
+    cout << "    \"random_chance\": " << gRandomChance << ",\n";
+    cout << "    \"eval_noise\": " << gEvalNoise << ",\n";
+    cout << "    \"quiescence_depth\": " << gMaxQDepth << "\n";
     cout << "  },\n";
     cout << "  \"legal_moves\": [";
     for (size_t i = 0; i < legalMoves.size(); i++) {

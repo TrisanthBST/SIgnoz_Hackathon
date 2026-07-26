@@ -1,11 +1,52 @@
 groups:
-- name: ExampleCPULoadGroup
+- name: ChessEngineAlerts
   rules:
-  - alert: HighCpuLoad
-    expr: system_cpu_load_average_1m > 0.1
+  - alert: ChessEngineSearchTimeout
+    expr: signoz_traces_duration_milliseconds{service_name="chess-engine-service",span_name="agent.decide_move"} > 10000
     for: 0m
     labels:
       severity: warning
+      service: chess-engine-service
     annotations:
-      summary: High CPU load
-      description: "CPU load is > 0.1\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+      summary: "Chess engine search exceeded 10s"
+      description: "Engine search took over 10s for a position. May indicate search blowup.\n  VALUE = {{ $value }}ms\n  LABELS = {{ $labels }}"
+
+  - alert: ChessEngineSearchCritical
+    expr: signoz_traces_duration_milliseconds{service_name="chess-engine-service",span_name="agent.decide_move"} > 30000
+    for: 0m
+    labels:
+      severity: critical
+      service: chess-engine-service
+    annotations:
+      summary: "Chess engine search exceeded 30s"
+      description: "Engine search took over 30s. Likely a pathological position.\n  VALUE = {{ $value }}ms\n  LABELS = {{ $labels }}"
+
+  - alert: CoachAgentHighLatency
+    expr: signoz_traces_duration_milliseconds{service_name="chess-coach-agent",span_name="coach.explain"} > 15000
+    for: 0m
+    labels:
+      severity: warning
+      service: chess-coach-agent
+    annotations:
+      summary: "LLM coach agent latency exceeded 15s"
+      description: "Coach agent explanation took over 15s. Groq API may be slow or overloaded.\n  VALUE = {{ $value }}ms\n  LABELS = {{ $labels }}"
+
+  - alert: CoachAgentHighTokenUsage
+    expr: signoz_metrics_signoz_otel_metrics_sum{metric_name="coach.tokens.total",service_name="chess-coach-agent"} > 10000
+    for: 5m
+    labels:
+      severity: warning
+      service: chess-coach-agent
+    annotations:
+      summary: "Coach agent token usage exceeded 10K in 5 minutes"
+      description: "High LLM token consumption detected. Check for excessive coach calls.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+
+  - alert: EngineNodeExplosion
+    expr: signoz_metrics_signoz_otel_metrics_sum{metric_name="engine.nodes_explored",service_name="chess-engine-service"} > 5000000
+    for: 0m
+    labels:
+      severity: warning
+      service: chess-engine-service
+    annotations:
+      summary: "Engine node count exceeded 5M"
+      description: "Engine explored over 5M nodes in a single search. Consider reducing depth.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"

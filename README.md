@@ -29,9 +29,9 @@ The core premise: **AI agents are black boxes. Glass Box Chess makes the chess a
 ┌──▼──────┐ ┌───▼──────────┐
 │ C++     │ │ Coach Agent  │  Port 5001
 │ Engine  │ │ (Node.js)    │
-│ WASM    │ │              │
-│         │ │ → Anthropic  │
-│ Search  │ │   Claude API │
+│ Binary  │ │              │
+│         │ │ → Groq       │
+│ Search  │ │   LLaMA 3.3  │
 │ + TT    │ │ → generates  │
 │ + QSearch│  │   natural   │
 │ + PSTs  │ │   language   │
@@ -87,7 +87,7 @@ Benchmark results (depth 5, starting position):
 
 ### Prerequisites
 - Docker and Docker Compose
-- An Anthropic API key (for the coach agent)
+- A free Groq API key (for the coach agent — get one at console.groq.com)
 
 ### Setup
 
@@ -96,8 +96,8 @@ Benchmark results (depth 5, starting position):
 git clone <your-repo-url>
 cd glass-box-chess
 
-# Set your Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
+# Set your Groq API key (free tier)
+export GROQ_API_KEY=gsk_...
 
 # Start the full stack
 docker compose up --build
@@ -167,7 +167,7 @@ An alert fires when `agent.decide_move` exceeds 10 seconds (warning) or 30 secon
 
 - **Engine**: C++ with minimax + alpha-beta, TT (Zobrist), iterative deepening, quiescence search, killer moves, history heuristic, piece-square tables, tapered eval
 - **Server**: Node.js/Express with OpenTelemetry SDK (auto + manual instrumentation)
-- **Coach Agent**: Node.js with Anthropic Claude API + OpenTelemetry
+- **Coach Agent**: Node.js with Groq LLaMA 3.3 70B (free tier) + OpenTelemetry
 - **Frontend**: React (Vite) with chess.js
 - **Observability**: OpenTelemetry → OTel Collector → SigNoz (ClickHouse)
 - **Infrastructure**: Docker Compose
