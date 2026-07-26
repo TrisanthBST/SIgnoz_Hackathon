@@ -25,6 +25,8 @@ import {
   Coins,
   Volume2,
   VolumeX,
+  Trophy,
+  Handshake,
 } from 'lucide-react';
 
 let audioCtx = null;
@@ -97,10 +99,10 @@ const DIFFICULTY_LEVELS = [
     personality: 'A serious engine with deep tactical vision. Finds most traps and forks.',
     description: 'Depth 6, pure search. A strong opponent that rarely blunders.' },
   { id: 'grandmaster', name: 'Grandmaster', tier: 'Expert', depth: 8, icon: Crown,
-    timeMs: 6000, randomChance: 0, evalNoise: 0, quiescenceDepth: 8,
-    fetchTimeout: 10000,
-    personality: 'Deep search with aggressive time management. Near-maximum strength.',
-    description: 'Depth 8, fast time budget. Very strong with responsive play.' },
+    timeMs: 10000, randomChance: 0, evalNoise: 0, quiescenceDepth: 10,
+    fetchTimeout: 20000,
+    personality: 'Maximum search depth with deep quiescence. Plays at a very strong level.',
+    description: 'Depth 8, deep quiescence. Near-maximum strength of this engine.' },
 ];
 
 const DIFFICULTY_COLORS = {
@@ -109,6 +111,9 @@ const DIFFICULTY_COLORS = {
   hard:   '#f43f5e',
   expert: '#a855f7',
 };
+
+// Fixed pacing for Bot vs Bot autoplay (no user-facing speed control).
+const AUTOPLAY_DELAY_MS = 600;
 
 const formatDuration = (ms) => {
   if (ms == null) return '--';
@@ -151,6 +156,72 @@ function classifyMove(evalBefore, evalAfter, moverColor) {
   if (d >= -1.0) return 'Inaccuracy';
   if (d >= -2.0) return 'Mistake';
   return 'Blunder';
+}
+
+// Works out who won a finished game, in terms that make sense given the
+// current mode (Human vs Engine, or Bot vs Bot autoplay), including the
+// color of whichever side won.
+function computeGameResult(g, cfg, difficultyName) {
+  let reason = 'Game Over';
+  let isDraw = false;
+  let winnerColor = null; // 'w' | 'b' | null when drawn
+
+  if (g.isCheckmate()) {
+    winnerColor = g.turn() === 'w' ? 'b' : 'w';
+    reason = 'Checkmate';
+  } else if (g.isStalemate()) {
+    isDraw = true; reason = 'Stalemate';
+  } else if (g.isThreefoldRepetition()) {
+    isDraw = true; reason = 'Threefold Repetition';
+  } else if (g.isInsufficientMaterial()) {
+    isDraw = true; reason = 'Insufficient Material';
+  } else if (g.isDraw()) {
+    isDraw = true; reason = '50-Move Rule';
+  } else {
+    isDraw = true;
+  }
+
+  const humanColor = cfg.playAsWhite ? 'w' : 'b';
+  const getController = (color) => {
+    if (cfg.autoPlayMode) return 'bot';
+    return color === humanColor ? 'human' : 'bot';
+  };
+
+  const colorLabel = (c) => (c === 'w' ? 'White' : 'Black');
+
+  let outcome, icon, eyebrow, title, subtitle;
+
+  if (isDraw) {
+    outcome = 'draw';
+    icon = 'draw';
+    eyebrow = 'Game Drawn';
+    title = 'Draw';
+    subtitle = `${reason} \u00b7 Nobody wins this one.`;
+  } else if (cfg.autoPlayMode) {
+    outcome = 'bot';
+    icon = 'bot';
+    eyebrow = 'Bot vs Bot';
+    title = `${colorLabel(winnerColor)} Wins`;
+    subtitle = `${reason} \u00b7 ${colorLabel(winnerColor)} (${difficultyName}) defeats ${colorLabel(winnerColor === 'w' ? 'b' : 'w')}`;
+  } else if (getController(winnerColor) === 'human') {
+    outcome = 'win';
+    icon = 'win';
+    eyebrow = 'You Won';
+    title = 'Victory!';
+    subtitle = `${reason} \u00b7 You played ${colorLabel(winnerColor)} against ${difficultyName}`;
+  } else {
+    outcome = 'loss';
+    icon = 'loss';
+    eyebrow = 'Engine Wins';
+    title = `${difficultyName} Wins`;
+    subtitle = `${reason} \u00b7 The engine played ${colorLabel(winnerColor)}`;
+  }
+
+  return {
+    outcome, icon, eyebrow, title, subtitle, winnerColor, isDraw,
+    whiteLabel: cfg.autoPlayMode ? `Bot (${difficultyName})` : (humanColor === 'w' ? 'You' : difficultyName),
+    blackLabel: cfg.autoPlayMode ? `Bot (${difficultyName})` : (humanColor === 'b' ? 'You' : difficultyName),
+  };
 }
 
 function TypewriterText({ text, speed = 18 }) {
@@ -261,6 +332,8 @@ function BestMoveArrow({ move, flipped, boardRef }) {
   );
 }
 
+const RESULT_ICONS = { win: Trophy, loss: Skull, draw: Handshake, bot: Bot };
+
 export default function App() {
   const [game, setGame] = useState(() => {
     const saved = loadSavedGame();
@@ -291,7 +364,7 @@ export default function App() {
     return {
       eval: saved?.eval ?? 0, depth: saved?.depth ?? 4, nodes: saved?.nodes ?? 0,
       timeMs: saved?.timeMs ?? 0, nps: saved?.nps ?? 0, traceId: saved?.traceId ?? null,
-      signozTraceUrl: saved?.signozTraceUrl ?? null, bestMove: saved?.bestMove ?? null,
+      traceUrl: saved?.traceUrl ?? saved?.signozTraceUrl ?? null, bestMove: saved?.bestMove ?? null,
       legalMoves: saved?.legalMoves ?? [], spans: saved?.spans ?? [],
     };
   });
@@ -300,9 +373,9 @@ export default function App() {
   const [config, setConfig] = useState(() => {
     const saved = loadSavedGame();
     return {
-      otlpEndpoint: 'http://localhost:4318', signozUiUrl: 'http://localhost:3301',
+      otlpEndpoint: 'http://localhost:4318', traceUiUrl: 'http://localhost:3301',
       engineDepth: saved?.engineDepth ?? 4, autoPlayMode: false,
-      autoPlayDelayMs: saved?.autoPlayDelayMs ?? 500, playAsWhite: saved?.playAsWhite ?? true,
+      autoPlayDelayMs: AUTOPLAY_DELAY_MS, playAsWhite: saved?.playAsWhite ?? true,
     };
   });
 
@@ -323,8 +396,18 @@ export default function App() {
   const [reloadPrompt, setReloadPrompt] = useState(() => {
     const saved = loadSavedGame();
     const moveCount = Array.isArray(saved?.moveHistory) ? saved.moveHistory.length : 0;
-    return { open: !!saved?.hasStarted && moveCount > 0, moveCount };
+    let alreadyOver = false;
+    if (saved?.fen) {
+      try { alreadyOver = new Chess(saved.fen).isGameOver(); } catch {}
+    }
+    // If the saved game had already ended, skip straight to the game-over
+    // modal instead of also showing "Resume Game" — otherwise both alerts
+    // stack on top of each other.
+    return { open: !!saved?.hasStarted && moveCount > 0 && !alreadyOver, moveCount };
   });
+
+  // End-of-game result modal. `result` holds the computeGameResult() output.
+  const [gameOverModal, setGameOverModal] = useState({ open: false, result: null });
 
   const turnStartRef = useRef(Date.now());
   const pauseStartRef = useRef(null);
@@ -341,12 +424,12 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         fen: game.fen(), moveHistory, lastMove, hasStarted, fenHistory, telemetry,
         coachExplanation, coachStats, gameStats, playAsWhite: config.playAsWhite, engineDepth: config.engineDepth,
-        autoPlayDelayMs: config.autoPlayDelayMs,
       }));
     } catch {}
   }, [game, moveHistory, lastMove, hasStarted, fenHistory, telemetry, coachExplanation, coachStats,
-      gameStats, config.playAsWhite, config.engineDepth, config.autoPlayDelayMs]);
+      gameStats, config.playAsWhite, config.engineDepth]);
 
+  // Keep the move-history panel scrolled to the latest move as it grows.
   useEffect(() => {
     if (historyRef.current) {
       historyRef.current.scrollTop = historyRef.current.scrollHeight;
@@ -369,6 +452,17 @@ export default function App() {
       setLiveElapsedMs(Date.now() - turnStartRef.current);
     }
   }, [isPaused]);
+
+  // Detect the game ending and pop the result modal — covers Human vs Engine
+  // and Bot vs Bot alike, using whatever mode was active when it ended.
+  useEffect(() => {
+    if (!hasStarted || !game.isGameOver()) return;
+    setIsPaused(true);
+    setReloadPrompt((prev) => (prev.open ? { ...prev, open: false } : prev));
+    const activeDiff = DIFFICULTY_LEVELS.find((l) => l.depth === config.engineDepth) || DIFFICULTY_LEVELS[1];
+    setGameOverModal((prev) => (prev.open ? prev : { open: true, result: computeGameResult(game, config, activeDiff.name) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, hasStarted]);
 
   const recordMove = (san, moverColor, from, to, classification) => {
     const durationMs = Date.now() - turnStartRef.current;
@@ -407,10 +501,10 @@ export default function App() {
       !config.autoPlayMode &&
       ((config.playAsWhite && game.turn() === 'b') || (!config.playAsWhite && game.turn() === 'w'));
     if (!config.autoPlayMode && !isSingleEngineTurn) return undefined;
-    const delay = config.autoPlayMode ? config.autoPlayDelayMs : 0;
+    const delay = config.autoPlayMode ? AUTOPLAY_DELAY_MS : 0;
     const timeout = setTimeout(() => { makeEngineMove(); }, delay);
     return () => clearTimeout(timeout);
-  }, [game, isPaused, isEvaluating, hasStarted, config.autoPlayMode, config.autoPlayDelayMs, config.playAsWhite]);
+  }, [game, isPaused, isEvaluating, hasStarted, config.autoPlayMode, config.playAsWhite]);
 
   const computeBestMoves = (legalMoveUci, fen) => {
     if (!legalMoveUci || legalMoveUci.length === 0) { setBestMoves([]); return; }
@@ -449,7 +543,7 @@ export default function App() {
       const data = await response.json();
       setTelemetry({
         eval: data.eval, depth: data.depth, nodes: data.nodes, timeMs: data.time_ms,
-        nps: data.nps, traceId: data.trace_id, signozTraceUrl: data.signoz_trace_url,
+        nps: data.nps, traceId: data.trace_id, traceUrl: data.trace_url ?? data.signoz_trace_url ?? null,
         bestMove: data.best_move, legalMoves: data.legal_moves || [], spans: data.spans || [],
       });
       computeBestMoves(data.legal_moves || [], fen);
@@ -502,7 +596,7 @@ export default function App() {
           setEngineError(null);
           setTelemetry({
             eval: data.eval, depth: data.depth, nodes: data.nodes, timeMs: data.time_ms,
-            nps: data.nps, traceId: data.trace_id, signozTraceUrl: data.signoz_trace_url,
+            nps: data.nps, traceId: data.trace_id, traceUrl: data.trace_url ?? data.signoz_trace_url ?? null,
             bestMove: data.best_move, legalMoves: data.legal_moves || [], spans: data.spans || [],
           });
           computeBestMoves(data.legal_moves || [], nextFen);
@@ -595,7 +689,8 @@ export default function App() {
     setBestMoves([]);
     setCoachExplanation(null);
     setEngineError(null);
-    setTelemetry({ eval: 0, depth: config.engineDepth, nodes: 0, timeMs: 0, nps: 0, traceId: null, signozTraceUrl: null, bestMove: null, legalMoves: [], spans: [] });
+    setGameOverModal({ open: false, result: null });
+    setTelemetry({ eval: 0, depth: config.engineDepth, nodes: 0, timeMs: 0, nps: 0, traceId: null, traceUrl: null, bestMove: null, legalMoves: [], spans: [] });
   };
 
   const handleStartStop = () => {
@@ -613,12 +708,32 @@ export default function App() {
     pauseStartRef.current = null;
     setBestMoves([]); setCoachExplanation(null); setLastEngineBlunder(false);
     setGameStats({ totalMoves: 0, captures: 0, checks: 0, castles: 0, promos: 0, whiteAvgThinkMs: 0, blackAvgThinkMs: 0, whiteTotalThinkMs: 0, blackTotalThinkMs: 0, whiteMoveCount: 0, blackMoveCount: 0 });
-    setTelemetry({ eval: 0, depth: config.engineDepth, nodes: 0, timeMs: 0, nps: 0, traceId: null, signozTraceUrl: null, bestMove: null, legalMoves: [], spans: [] });
+    setTelemetry({ eval: 0, depth: config.engineDepth, nodes: 0, timeMs: 0, nps: 0, traceId: null, traceUrl: null, bestMove: null, legalMoves: [], spans: [] });
+    setGameOverModal({ open: false, result: null });
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   };
 
   const handleContinueSavedGame = () => { setReloadPrompt((prev) => ({ ...prev, open: false })); };
   const handleResetOnReload = () => { handleResetGame(); setReloadPrompt({ open: false, moveCount: 0 }); };
+
+  const handleReviewBoard = () => { setGameOverModal((prev) => ({ ...prev, open: false })); };
+  const handleNewGameFromResult = () => { handleResetGame(); };
+
+  // "Done" on the result modal: jumps straight into a fresh game with the
+  // same color/difficulty/mode, skipping the color picker and Start button.
+  const handleDoneNextGame = () => {
+    const newGame = new Chess();
+    setGame(newGame);
+    setSelectedSquare(null); setPossibleMoves([]); setLastMove(null);
+    setMoveHistory([]); setFenHistory([newGame.fen()]);
+    setHasStarted(true); setIsPaused(false); setShowColorPicker(false);
+    setEngineError(null);
+    pauseStartRef.current = null;
+    setBestMoves([]); setCoachExplanation(null); setLastEngineBlunder(false);
+    setGameStats({ totalMoves: 0, captures: 0, checks: 0, castles: 0, promos: 0, whiteAvgThinkMs: 0, blackAvgThinkMs: 0, whiteTotalThinkMs: 0, blackTotalThinkMs: 0, whiteMoveCount: 0, blackMoveCount: 0 });
+    setTelemetry({ eval: 0, depth: config.engineDepth, nodes: 0, timeMs: 0, nps: 0, traceId: null, traceUrl: null, bestMove: null, legalMoves: [], spans: [] });
+    setGameOverModal({ open: false, result: null });
+  };
 
   const handleUndo = () => {
     if (moveHistory.length === 0 || isEvaluating) return;
@@ -631,6 +746,7 @@ export default function App() {
     setSelectedSquare(null); setPossibleMoves([]); setEngineError(null);
     setConfig((prev) => ({ ...prev, autoPlayMode: false }));
     setIsPaused(true);
+    setGameOverModal({ open: false, result: null });
     const priorMove = newMoveHistory[newMoveHistory.length - 1];
     setLastMove(priorMove ? { from: priorMove.from, to: priorMove.to } : null);
     evaluatePosition(targetFen);
@@ -744,7 +860,7 @@ export default function App() {
       </header>
 
       <main className="main-stage">
-        {/* Left: Engine Analysis + AI Coach */}
+        {/* Left: Engine Analysis + AI Coach (scrollable) */}
         <aside className="side-panel side-panel-scroll">
           <div className="glass-panel side-panel-card">
             <div className="section-header-title">
@@ -793,8 +909,8 @@ export default function App() {
               <div className="section-header-title">
                 <Activity className="w-4 h-4" style={{ color: 'var(--accent-cyan)' }} />
                 Span Waterfall
-                {telemetry.traceId && (
-                  <a href={telemetry.signozTraceUrl} target="_blank" rel="noopener noreferrer" className="trace-link">SigNoz</a>
+                {telemetry.traceId && telemetry.traceUrl && (
+                  <a href={telemetry.traceUrl} target="_blank" rel="noopener noreferrer" className="trace-link">View Trace</a>
                 )}
               </div>
               <div className="side-panel-body">
@@ -979,19 +1095,6 @@ export default function App() {
                 </span>
               </div>
 
-              {config.autoPlayMode && (
-                <div className="speed-dial">
-                  <label className="speed-dial-label">
-                    <span>Autoplay Pace</span>
-                    <span className="speed-dial-value">{(config.autoPlayDelayMs / 1000).toFixed(1)}s / move</span>
-                  </label>
-                  <input type="range" min="100" max="3000" step="100" value={config.autoPlayDelayMs}
-                    onChange={(e) => setConfig((prev) => ({ ...prev, autoPlayDelayMs: Number(e.target.value) }))}
-                    style={{ width: '100%', accentColor: 'var(--accent-rose)' }} />
-                  <div className="speed-dial-ticks"><span>Turbo</span><span>Leisurely</span></div>
-                </div>
-              )}
-
               <div className="difficulty-current">
                 <span className="difficulty-select-label">Difficulty</span>
                 {(() => {
@@ -1092,17 +1195,17 @@ export default function App() {
             </div>
 
             <div className="form-group">
-              <label>SigNoz OTLP Collector Endpoint</label>
+              <label>OTLP Collector Endpoint</label>
               <input type="text" className="form-input" value={config.otlpEndpoint}
                 onChange={(e) => setConfig((prev) => ({ ...prev, otlpEndpoint: e.target.value }))}
                 placeholder="http://localhost:4318" />
-              <span className="form-hint">Supports local Docker SigNoz or SigNoz Cloud.</span>
+              <span className="form-hint">Supports any OpenTelemetry-compatible collector, local or cloud.</span>
             </div>
 
             <div className="form-group">
-              <label>SigNoz UI Dashboard URL</label>
-              <input type="text" className="form-input" value={config.signozUiUrl}
-                onChange={(e) => setConfig((prev) => ({ ...prev, signozUiUrl: e.target.value }))}
+              <label>Trace Dashboard URL</label>
+              <input type="text" className="form-input" value={config.traceUiUrl}
+                onChange={(e) => setConfig((prev) => ({ ...prev, traceUiUrl: e.target.value }))}
                 placeholder="http://localhost:3301" />
             </div>
 
@@ -1166,6 +1269,79 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {gameOverModal.open && gameOverModal.result && (() => {
+        const r = gameOverModal.result;
+        const ResultIcon = RESULT_ICONS[r.icon] || Trophy;
+        return (
+          <div className="modal-overlay">
+            <div className={`modal-card reload-modal result-modal-${r.outcome}`}>
+              <div className={`reload-modal-icon result-modal-icon-${r.outcome}`}><ResultIcon className="w-5 h-5" /></div>
+              <div className={`reload-modal-eyebrow result-modal-eyebrow-${r.outcome}`}>{r.eyebrow}</div>
+              <h3 className="reload-modal-title">{r.title}</h3>
+              <p className="reload-modal-body">{r.subtitle}</p>
+
+              <div className="result-modal-side-badges">
+                <span className={`result-side-chip ${r.winnerColor === 'w' ? 'result-side-chip-winner' : ''}`}>
+                  &#9812; White &middot; {r.whiteLabel}
+                </span>
+                <span className="result-side-vs">vs</span>
+                <span className={`result-side-chip ${r.winnerColor === 'b' ? 'result-side-chip-winner' : ''}`}>
+                  &#9818; Black &middot; {r.blackLabel}
+                </span>
+              </div>
+
+              <div className="result-modal-stats">
+                <div className="result-modal-stats-header">Game Stats</div>
+                <div className="game-stats-grid">
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">Moves</span>
+                    <span className="game-stat-value">{gameStats.totalMoves}</span>
+                  </div>
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">Captures</span>
+                    <span className="game-stat-value">{gameStats.captures}</span>
+                  </div>
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">Checks</span>
+                    <span className="game-stat-value">{gameStats.checks}</span>
+                  </div>
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">Castles</span>
+                    <span className="game-stat-value">{gameStats.castles}</span>
+                  </div>
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">White Avg</span>
+                    <span className="game-stat-value">{formatDuration(gameStats.whiteAvgThinkMs)}</span>
+                  </div>
+                  <div className="game-stat-item">
+                    <span className="game-stat-label">Black Avg</span>
+                    <span className="game-stat-value">{formatDuration(gameStats.blackAvgThinkMs)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="reload-modal-options">
+                <button onClick={handleDoneNextGame} className="reload-option reload-option-primary">
+                  <Play className="w-5 h-5" />
+                  <span className="reload-option-title">Done &middot; Next Game</span>
+                  <span className="reload-option-sub">Same settings, starts now</span>
+                </button>
+                <button onClick={handleReviewBoard} className="reload-option">
+                  <Target className="w-5 h-5" />
+                  <span className="reload-option-title">Review Board</span>
+                  <span className="reload-option-sub">Keep looking at the final position</span>
+                </button>
+                <button onClick={handleNewGameFromResult} className="reload-option">
+                  <RotateCcw className="w-5 h-5" />
+                  <span className="reload-option-title">New Game Setup</span>
+                  <span className="reload-option-sub">Pick a new color / difficulty</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
